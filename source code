@@ -1,0 +1,542 @@
+Reconstructed Source Code for MetaWormMiner
+
+1. Project Structure
+
+The structure is already provided and seems standard for an Android app using Jetpack Compose and Dagger Hilt:
+
+MetaWormMiner/
+app/
+build.gradle (App Module)
+proguard-rules.pro
+src/
+main/
+java/com/example/metawormminer/
+di/AppModule.kt
+model/QuantumBeacon.kt
+model/Receipt.kt
+network/MetaWormApi.kt
+network/model/ApiResponse.kt
+network/model/LoginRequest.kt
+network/model/LoginResponse.kt
+repository/MetaWormRepository.kt
+security/SecureSharedPreferences.kt
+ui/CommunityScreen.kt
+ui/LoginScreen.kt
+ui/MainScreen.kt
+ui/SettingsScreen.kt
+viewmodel/MetaWormViewModel.kt
+MetaWormMiner.kt
+res/
+values/colors.xml
+values/strings.xml
+values/themes.xml
+AndroidManifest.xml
+build.gradle (Project Level)
+
+2. build.gradle (Project Level)
+
+buildscript {
+repositories {
+google()
+mavenCentral()
+}
+dependencies {
+classpath "com.android.tools.build:gradle:8.1.0"
+classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0" // Corrected version
+classpath "com.google.dagger:hilt-android-gradle-plugin:2.48"
+}
+}
+
+allprojects {
+repositories {
+google()
+mavenCentral()
+}
+}
+
+task clean(type: Delete) {
+delete rootProject.buildDir
+}
+
+3. app/build.gradle (App Module)
+
+plugins {
+id 'com.android.application'
+id 'org.jetbrains.kotlin.android'
+id 'kotlin-kapt'
+id 'dagger.hilt.android.plugin'
+}
+
+android {
+compileSdk 33
+defaultConfig {
+applicationId "com.example.metawormminer"
+minSdk 21
+targetSdk 33
+versionCode 1
+versionName "1.0"
+buildConfigField "String", "API_BASE_URL", "\"https://your-api-base-url.com/\""
+testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+}
+buildTypes {
+release {
+minifyEnabled true
+proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+}
+}
+compileOptions {
+sourceCompatibility JavaVersion.VERSION_1_8
+targetCompatibility JavaVersion.VERSION_1_8
+}
+kotlinOptions {
+jvmTarget = '1.8'
+}
+buildFeatures {
+compose true
+}
+composeOptions {
+kotlinCompilerExtensionVersion '1.4.0'
+}
+}
+
+dependencies {
+implementation 'androidx.core:core-ktx:1.9.0'
+implementation 'androidx.activity:activity-compose:1.7.0'
+implementation 'androidx.compose.ui:ui:1.4.0' // Corrected from corrupted text
+implementation 'androidx.compose.material3:material3:1.1.0'
+implementation 'androidx.navigation:navigation-compose:2.5.3'
+implementation 'com.google.dagger:hilt-android:2.48'
+kapt 'com.google.dagger:hilt-android-compiler:2.48'
+implementation 'androidx.hilt:hilt-navigation-compose:1.0.0'
+// Assuming 'com defendant:2.0.0' is a typo; replaced with placeholder dependencies
+implementation 'com.squareup.retrofit2:retrofit:2.9.0' // Retrofit for networking
+implementation 'com.squareup.retrofit2:converter-gson:2.9.0' // Gson converter
+implementation 'com.squareup.okhttp3:okhttp:4.10.0' // OkHttp for HTTP client
+implementation 'androidx.security:security-crypto:1.1.0-alpha06' // For EncryptedSharedPreferences
+implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4'
+implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.6.0'
+implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.0'
+}
+
+4. app/proguard-rules.pro
+
+# Dagger
+-keep class dagger.** { *; }
+-keep class javax.inject.** { *; }
+-keep class **$$ModuleAdapter { *; }
+-keep class **$$InjectAdapter { *; }
+
+# Retrofit
+-keep class retrofit2.** { *; }
+-keep interface retrofit2.** { *; }
+-keepattributes Signature
+-keepattributes Exceptions
+
+# Compose
+-keep class androidx.compose.** { *; }
+-dontwarn androidx.compose.**
+
+# Kotlin Serialization
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class kotlinx.serialization.Serializable { *; }
+
+5. app/src/main/AndroidManifest.xml (Assumed)
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+package="com.example.metawormminer">
+
+<application
+android:allowBackup="true"
+android:icon="@mipmap/ic_launcher"
+android:label="@string/app_name"
+android:roundIcon="@mipmap/ic_launcher_round"
+android:supportsRtl="true"
+android:theme="@style/Theme.MetaWormMiner">
+<activity
+android:name=".MetaWormMiner"
+android:exported="true">
+<intent-filter>
+<action android:name="android.intent.action.MAIN" />
+<category android:name="android.intent.category.LAUNCHER" />
+</intent-filter>
+</activity>
+</application>
+
+</manifest>
+
+6. app/src/main/java/com/example/metawormminer/di/AppModule.kt
+
+package com.example.metawormminer.di
+
+import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.example.metawormminer.BuildConfig
+import com.example.metawormminer.network.MetaWormApi
+import com.example.metawormminer.repository.MetaWormRepository
+import com.example.metawormminer.security.SecureSharedPreferences
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import okhttp3.CertificatePinner
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.TimeUnit
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+
+@Provides
+@Singleton
+fun provideApi(@ApplicationContext context: Context): MetaWormApi {
+val certificatePinner = CertificatePinner.Builder()
+.add(BuildConfig.API_BASE_URL.replace("https://", ""), "sha256/your-cert-hash")
+.build()
+val authInterceptor = Interceptor { chain ->
+val originalRequest = chain.request()
+val token = EncryptedSharedPreferences.create(
+context,
+"secure_prefs",
+MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+).getString("auth_token", null)
+val modifiedRequest = originalRequest.newBuilder()
+.header("Authorization", "Bearer $token")
+.build()
+chain.proceed(modifiedRequest)
+}
+val client = OkHttpClient.Builder()
+.connectTimeout(15, TimeUnit.SECONDS)
+.readTimeout(15, TimeUnit.SECONDS)
+.certificatePinner(certificatePinner)
+.addInterceptor(authInterceptor)
+.retryOnConnectionFailure(true)
+.build()
+
+return Retrofit.Builder()
+.baseUrl(BuildConfig.API_BASE_URL)
+.client(client)
+.addConverterFactory(GsonConverterFactory.create())
+.build()
+.create(MetaWormApi::class.java)
+}
+
+@Provides
+@Singleton
+fun provideRepository(api: MetaWormApi, prefs: SecureSharedPreferences): MetaWormRepository {
+return MetaWormRepository(api, prefs)
+}
+
+@Provides
+@Singleton
+fun provideSecureSharedPreferences(@ApplicationContext context: Context): SecureSharedPreferences {
+val masterKey = MasterKey.Builder(context)
+.setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+.build()
+val prefs = EncryptedSharedPreferences.create(
+context,
+"secure_prefs",
+masterKey,
+EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+)
+return SecureSharedPreferences(prefs)
+}
+}
+
+7. app/src/main/java/com/example/metawormminer/model/QuantumBeacon.kt (Assumed)
+
+package com.example.metawormminer.model
+
+data class QuantumBeacon(
+val timestamp: Long = System.currentTimeMillis(),
+val location: String,
+val tokensEarned: Float
+)
+
+8. app/src/main/java/com/example/metawormminer/model/Receipt.kt (Assumed)
+
+package com.example.metawormminer.model
+
+data class Receipt(
+val timestamp: Long = System.currentTimeMillis(),
+val tokensEarned: Double,
+val location: String,
+val cost: Double
+)
+
+9. app/src/main/java/com/example/metawormminer/network/MetaWormApi.kt
+
+package com.example.metawormminer.network
+
+import com.example.metawormminer.model.QuantumBeacon
+import com.example.metawormminer.model.Receipt
+import com.example.metawormminer.network.model.ApiResponse
+import com.example.metawormminer.network.model.LoginRequest
+import com.example.metawormminer.network.model.LoginResponse
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.POST
+
+interface MetaWormApi {
+@POST("api/login")
+suspend fun login(@Body credentials: LoginRequest): Response<LoginResponse>
+
+@POST("api/quantum-beacon")
+suspend fun submitQuantumBeacon(@Body beacon: QuantumBeacon): Response<ApiResponse>
+
+@POST("api/receipt")
+suspend fun submitReceipt(@Body receipt: Receipt): Response<ApiResponse>
+}
+
+10. app/src/main/java/com/example/metawormminer/network/model/ApiResponse.kt
+
+package com.example.metawormminer.network.model
+
+data class ApiResponse(
+val success: Boolean,
+val message: String?
+)
+
+11. app/src/main/java/com/example/metawormminer/network/model/LoginRequest.kt
+
+package com.example.metawormminer.network.model
+
+data class LoginRequest(
+val username: String,
+val password: String
+)
+
+12. app/src/main/java/com/example/metawormminer/network/model/LoginResponse.kt
+
+package com.example.metawormminer.network.model
+
+data class LoginResponse(
+val success: Boolean,
+val token: String?,
+val message: String?
+)
+
+13. app/src/main/java/com/example/metawormminer/repository/MetaWormRepository.kt (Assumed)
+
+package com.example.metawormminer.repository
+
+import android.util.Log
+import com.example.metawormminer.model.QuantumBeacon
+import com.example.metawormminer.model.Receipt
+import com.example.metawormminer.network.MetaWormApi
+import com.example.metawormminer.security.SecureSharedPreferences
+import javax.inject.Inject
+
+class MetaWormRepository @Inject constructor(
+private val api: MetaWormApi,
+private val prefs: SecureSharedPreferences
+) {
+suspend fun submitQuantumBeacon(beacon: QuantumBeacon): Boolean {
+return try {
+val response = api.submitQuantumBeacon(beacon)
+if (response.isSuccessful) {
+response.body()?.success ?: false
+} else {
+Log.e("MetaWormRepository", "Failed to submit quantum beacon: ${response.message()}")
+false
+}
+} catch (e: Exception) {
+Log.e("MetaWormRepository", "Error submitting quantum beacon", e)
+false
+}
+}
+
+suspend fun submitReceipt(receipt: Receipt): Boolean {
+return try {
+val response = api.submitReceipt(receipt)
+if (response.isSuccessful) {
+response.body()?.success ?: false
+} else {
+Log.e("MetaWormRepository", "Failed to submit receipt: ${response.message()}")
+false
+}
+} catch (e: Exception) {
+Log.e("MetaWormRepository", "Error submitting receipt", e)
+false
+}
+}
+
+fun getTokens(): Float {
+return prefs.getFloat("tokens", 0f)
+}
+
+fun updateTokens(tokens: Float) {
+prefs.putFloat("tokens", tokens)
+}
+
+fun getReferralCount(): Int {
+return prefs.getInt("referral_count", 0)
+}
+
+fun updateReferralCount(count: Int) {
+prefs.putInt("referral_count", count)
+}
+}
+
+14. app/src/main/java/com/example/metawormminer/security/SecureSharedPreferences.kt (Assumed)
+
+package com.example.metawormminer.security
+
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import javax.inject.Inject
+
+class SecureSharedPreferences @Inject constructor(private val prefs: SharedPreferences) {
+
+fun getString(key: String, defaultValue: String?): String? {
+return prefs.getString(key, defaultValue)
+}
+
+fun putString(key: String, value: String?) {
+prefs.edit().putString(key, value).apply()
+}
+
+fun getFloat(key: String, defaultValue: Float): Float {
+return prefs.getFloat(key, defaultValue)
+}
+
+fun putFloat(key: String, value: Float) {
+prefs.edit().putFloat(key, value).apply()
+}
+
+fun getInt(key: String, defaultValue: Int): Int {
+return prefs.getInt(key, defaultValue)
+}
+
+fun putInt(key: String, value: Int) {
+prefs.edit().putInt(key, value).apply()
+}
+}
+
+15. app/src/main/java/com/example/metawormminer/viewmodel/MetaWormViewModel.kt (Assumed)
+
+package com.example.metawormminer.viewmodel
+
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.metawormminer.repository.MetaWormRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import android.util.Log
+
+@HiltViewModel
+class MetaWormViewModel @Inject constructor(
+private val repository: MetaWormRepository
+) : ViewModel() {
+
+val tokens = mutableStateOf(0f)
+val isLoading = mutableStateOf(false)
+val showReceiptDialog = mutableStateOf(false)
+
+init {
+tokens.value = repository.getTokens()
+}
+
+fun mineQuantumBeacon(location: String, miningRate: Float) {
+viewModelScope.launch {
+isLoading.value = true
+val beacon = QuantumBeacon(
+location = location,
+tokensEarned = miningRate / (24 * 60 * 60 / 5000f) // Tokens per 5-second mine
+)
+if (repository.submitQuantumBeacon(beacon)) {
+tokens.value += miningRate / (24 * 60 * 60 / 5000f)
+repository.updateTokens(tokens.value)
+}
+isLoading.value = false
+}
+}
+
+fun showUploadReceiptDialog() {
+showReceiptDialog.value = true
+}
+
+fun hideUploadReceiptDialog() {
+showReceiptDialog.value = false
+}
+
+fun uploadReceipt(cost: Double, location: String) {
+viewModelScope.launch {
+isLoading.value = true
+val receipt = Receipt(
+timestamp = System.currentTimeMillis(),
+tokensEarned = cost * 0.1,
+location = location,
+cost = cost
+)
+if (repository.submitReceipt(receipt)) {
+tokens.value = repository.getTokens()
+Log.d("MetaWormViewModel", "Receipt uploaded successfully")
+}
+isLoading.value = false
+}
+}
+
+fun addReferral() {
+val currentCount = repository.getReferralCount()
+repository.updateReferralCount(currentCount + 1)
+}
+}
+
+16. app/src/main/java/com/example/metawormminer/MetaWormMiner.kt
+
+package com.example.metawormminer
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
+class MetaWormMiner : ComponentActivity() {
+override fun onCreate(savedInstanceState: Bundle?) {
+super.onCreate(savedInstanceState)
+setContent {
+MetaWormApp()
+}
+}
+}
+
+@Composable
+fun MetaWormApp() {
+Text(text = "MetaWormMiner App")
+// Add navigation and UI screens here (e.g., LoginScreen, MainScreen)
+}
+
+17. app/src/main/res/values/strings.xml
+
+<resources>
+<string name="app_name">MetaWormMiner</string>
+<string name="mine_tokens">Mine MetaWorm Tokens</string>
+<string name="upload_receipt">Upload Receipt</string>
+<string name="settings">Settings</string>
+<string name="community">Community</string>
+<string name="add_referral">Add Referral (Test)</string>
+<string name="tokens_format">Tokens: $%.2f</string>
+</resources>
+
+18. app/src/main/res/values/themes.xml (Assumed)
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+<style name="Theme.MetaWormMiner" parent="android:Theme.Material3.Light.NoActionBar">
+<!-- Customize theme here -->
+</style>
+</resources>
