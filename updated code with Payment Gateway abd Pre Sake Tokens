@@ -1,0 +1,742 @@
+MetaWormMiner/
+├── app/
+│   ├── build.gradle (App Module)
+│   ├── proguard-rules.pro
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/com/example/metawormminer/
+│   │   │   │   ├── di/AppModule.kt
+│   │   │   │   ├── model/QuantumBeacon.kt
+│   │   │   │   ├── model/Receipt.kt
+│   │   │   │   ├── network/MetaWormApi.kt
+│   │   │   │   ├── network/model/ApiResponse.kt
+│   │   │   │   ├── network/model/LoginRequest.kt
+│   │   │   │   ├── network/model/LoginResponse.kt
+│   │   │   │   ├── network/model/PresaleRequest.kt
+│   │   │   │   ├── network/model/PresaleResponse.kt
+│   │   │   │   ├── repository/MetaWormRepository.kt
+│   │   │   │   ├── security/SecureSharedPreferences.kt
+│   │   │   │   ├── ui/LoginScreen.kt
+│   │   │   │   ├── ui/PresaleScreen.kt
+│   │   │   │   ├── viewmodel/MetaWormViewModel.kt
+│   │   │   │   └── MetaWormMiner.kt
+│   │   │   ├── res/
+│   │   │   │   ├── values/colors.xml
+│   │   │   │   ├── values/strings.xml
+│   │   │   │   └── values/themes.xml
+│   │   └── AndroidManifest.xml
+│   └── build.gradle (Project Level)
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.1.0"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0"
+        classpath "com.google.dagger:hilt-android-gradle-plugin:2.48"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+
+# Dagger
+-keep class dagger.** { *; }
+-keep class javax.inject.** { *; }
+-keep class **$$ModuleAdapter
+-keep class **$$InjectAdapter
+
+# Retrofit
+-keep class retrofit2.** { *; }
+-keep interface retrofit2.** { *; }
+-keepattributes Signature
+-keepattributes Exceptions
+
+# Compose
+-keep class androidx.compose.** { *; }
+-dontwarn androidx.compose.**
+
+# Kotlin Serialization
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class kotlinx.serialization.Serializable { *; }
+
+# Web3j
+-keep class org.web3j.** { *; }
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.metawormminer">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MetaWormMiner">
+        <activity
+            android:name=".MetaWormMiner"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+package com.example.metawormminer.di
+
+import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.example.metawormminer.BuildConfig
+import com.example.metawormminer.network.MetaWormApi
+import com.example.metawormminer.repository.MetaWormRepository
+import com.example.metawormminer.security.SecureSharedPreferences
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import okhttp3.CertificatePinner
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import java.util.concurrent.TimeUnit
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+
+    @Provides
+    @Singleton
+    fun provideApi(@ApplicationContext context: Context): MetaWormApi {
+        val certificatePinner = CertificatePinner.Builder()
+            .add(BuildConfig.API_BASE_URL.replace("https://", ""), "sha256/your-cert-hash")
+            .build()
+
+        val authInterceptor = Interceptor { chain ->
+            val originalRequest = chain.request()
+            val token = EncryptedSharedPreferences.create(
+                context,
+                "secure_prefs",
+                MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            ).getString("auth_token", null)
+            val modifiedRequest = originalRequest.newBuilder()
+                .header("Authorization", "Bearer $token")
+                .build()
+            chain.proceed(modifiedRequest)
+        }
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .certificatePinner(certificatePinner)
+            .addInterceptor(authInterceptor)
+            .retryOnConnectionFailure(true)
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl(BuildConfig.API_BASE_URL)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(MetaWormApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideRepository(api: MetaWormApi, prefs: SecureSharedPreferences): MetaWormRepository {
+        return MetaWormRepository(api, prefs)
+    }
+
+    @Provides
+    @Singleton
+    fun provideSecureSharedPreferences(@ApplicationContext context: Context): SecureSharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        val prefs = EncryptedSharedPreferences.create(
+            context,
+            "secure_prefs",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        return SecureSharedPreferences(prefs)
+    }
+}
+
+package com.example.metawormminer.network
+
+import com.example.metawormminer.network.model.*
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.POST
+
+interface MetaWormApi {
+    @POST("api/login")
+    suspend fun login(@Body credentials: LoginRequest): Response<LoginResponse>
+
+    @POST("api/presale/swap")
+    suspend fun swapForPresale(@Body request: PresaleRequest): Response<PresaleResponse>
+
+    @POST("api/presale/fiat")
+    suspend fun buyPresaleWithFiat(@Body request: PresaleRequest): Response<PresaleResponse>
+}
+
+package com.example.metawormminer.network.model
+
+data class ApiResponse(
+    val success: Boolean,
+    val message: String?
+)
+
+package com.example.metawormminer.network.model
+
+data class LoginRequest(
+    val username: String,
+    val password: String
+)
+
+package com.example.metawormminer.network.model
+
+data class LoginResponse(
+    val success: Boolean,
+    val token: String?,
+    val message: String?
+)
+
+package com.example.metawormminer.network.model
+
+data class PresaleRequest(
+    val amount: Float,
+    val paymentMethod: String, // "ZK", "ETH", "USDT", "USDC", "Fiat"
+    val fiatCurrency: String? = null, // e.g., "USD", "EUR"
+    val fiatPaymentType: String? = null // "Card", "ACH", "Wire", "PayPal", etc.
+)
+
+package com.example.metawormminer.network.model
+
+data class PresaleRequest(
+    val amount: Float,
+    val paymentMethod: String, // "ZK", "ETH", "USDT", "USDC", "Fiat"
+    val fiatCurrency: String? = null, // e.g., "USD", "EUR"
+    val fiatPaymentType: String? = null // "Card", "ACH", "Wire", "PayPal", etc.
+)
+
+package com.example.metawormminer.network.model
+
+data class PresaleResponse(
+    val success: Boolean,
+    val transactionHash: String?, // For crypto swaps
+    val paymentUrl: String?, // For fiat payments
+    val message: String?
+)
+package com.example.metawormminer.repository
+
+import android.util.Log
+import com.example.metawormminer.network.MetaWormApi
+import com.example.metawormminer.network.model.LoginRequest
+import com.example.metawormminer.network.model.PresaleRequest
+import com.example.metawormminer.security.SecureSharedPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+
+class MetaWormRepository @Inject constructor(
+    private val api: MetaWormApi,
+    private val prefs: SecureSharedPreferences
+) {
+    suspend fun login(username: String, password: String): Boolean = withContext(Dispatchers.IO) {
+        val response = api.login(LoginRequest(username, password))
+        if (response.isSuccessful) {
+            response.body()?.let { loginResponse ->
+                if (loginResponse.success && loginResponse.token != null) {
+                    prefs.putString("auth_token", loginResponse.token)
+                    prefs.putString("user_id", username)
+                    return@withContext true
+                }
+            }
+        }
+        Log.e("MetaWormRepository", "Login failed: ${response.errorBody()?.string()}")
+        false
+    }
+
+    suspend fun swapForPresale(amount: Float, token: String): Boolean = withContext(Dispatchers.IO) {
+        val authToken = prefs.getString("auth_token", null) ?: return@withContext false
+        val response = api.swapForPresale(PresaleRequest(amount, token))
+        if (response.isSuccessful && response.body()?.success == true) {
+            val txHash = response.body()?.transactionHash
+            Log.d("MetaWormRepository", "Swap successful: $txHash")
+            prefs.putFloat("ra_tokens", prefs.getFloat("ra_tokens", 0f) + amount)
+            return@withContext true
+        }
+        Log.e("MetaWormRepository", "Swap failed: ${response.errorBody()?.string()}")
+        false
+    }
+
+    suspend fun buyPresaleWithFiat(
+        amount: Float,
+        fiatCurrency: String,
+        paymentType: String
+    ): String? = withContext(Dispatchers.IO) {
+        val authToken = prefs.getString("auth_token", null) ?: return@withContext null
+        val response = api.buyPresaleWithFiat(PresaleRequest(amount, "Fiat", fiatCurrency, paymentType))
+        if (response.isSuccessful && response.body()?.success == true) {
+            val paymentUrl = response.body()?.paymentUrl
+            if (paymentUrl != null) {
+                prefs.putFloat("ra_tokens", prefs.getFloat("ra_tokens", 0f) + amount)
+            }
+            return@withContext paymentUrl
+        }
+        Log.e("MetaWormRepository", "Fiat purchase failed: ${response.errorBody()?.string()}")
+        null
+    }
+
+    fun getRaTokens(): Float = prefs.getFloat("ra_tokens", 0f)
+}
+package com.example.metawormminer.security
+
+import android.content.SharedPreferences
+import javax.inject.Inject
+
+class SecureSharedPreferences @Inject constructor(private val prefs: SharedPreferences) {
+    fun getString(key: String, default: String?): String? = prefs.getString(key, default)
+    fun putString(key: String, value: String?) = prefs.edit().putString(key, value).apply()
+    fun getFloat(key: String, default: Float): Float = prefs.getFloat(key, default)
+    fun putFloat(key: String, value: Float) = prefs.edit().putFloat(key, value).apply()
+}
+
+package com.example.metawormminer.viewmodel
+
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.metawormminer.repository.MetaWormRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class MetaWormViewModel @Inject constructor(
+    private val repository: MetaWormRepository
+) : ViewModel() {
+    private val _raTokens = MutableStateFlow(0f)
+    val raTokens: StateFlow<Float> = _raTokens.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    var paymentUrl = mutableStateOf<String?>(null)
+
+    init {
+        _raTokens.value = repository.getRaTokens()
+    }
+
+    fun login(username: String, password: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val success = repository.login(username, password)
+            _isLoading.value = false
+            onResult(success)
+        }
+    }
+
+    fun swapForPresale(amount: Float, token: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val success = repository.swapForPresale(amount, token)
+            if (success) _raTokens.value = repository.getRaTokens()
+            _isLoading.value = false
+            onResult(success)
+        }
+    }
+
+    fun buyPresaleWithFiat(amount: Float, fiatCurrency: String, paymentType: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val url = repository.buyPresaleWithFiat(amount, fiatCurrency, paymentType)
+            paymentUrl.value = url
+            _isLoading.value = false
+            if (url != null) _raTokens.value = repository.getRaTokens()
+        }
+    }
+}
+package com.example.metawormminer.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
+import com.example.metawormminer.viewmodel.MetaWormViewModel
+
+@Composable
+fun LoginScreen(navController: NavHostController, viewModel: MetaWormViewModel = hiltViewModel()) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Welcome to MetaWormMiner", fontSize = 24.sp, color = Color(0xFF26A69A))
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Enter Username") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Enter Password") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (errorMessage.isNotEmpty()) {
+            Text(errorMessage, color = Color.Red)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Button(
+                onClick = {
+                    viewModel.login(username, password) { success ->
+                        if (success) navController.navigate("presale") { popUpTo(0) }
+                        else errorMessage = "Invalid login"
+                    }
+                },
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26A69A))
+            ) {
+                Text("Login", color = Color.White)
+            }
+            Button(
+                onClick = { navController.popBackStack() },
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                border = BorderStroke(1.dp, Color(0xFF26A69A))
+            ) {
+                Text("Back", color = Color(0xFF26A69A))
+            }
+        }
+    }
+}
+package com.example.metawormminer.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
+import com.example.metawormminer.viewmodel.MetaWormViewModel
+
+@Composable
+fun PresaleScreen(navController: NavHostController, viewModel: MetaWormViewModel = hiltViewModel()) {
+    var amount by remember { mutableStateOf("1000") }
+    var paymentMethod by remember { mutableStateOf("ZK") }
+    var fiatCurrency by remember { mutableStateOf("USD") }
+    var fiatPaymentType by remember { mutableStateOf("Card") }
+    var fiatPaymentExpanded by remember { mutableStateOf(false) }
+    val total = (amount.toFloatOrNull() ?: 0f) * 0.01f // 0.01 USD/RA
+    val isLoading = viewModel.isLoading.collectAsState().value
+    val paymentUrl = viewModel.paymentUrl.value
+
+    LaunchedEffect(paymentUrl) {
+        if (paymentUrl != null) {
+            // TODO: Open WebView or browser for payment URL
+            println("Redirect to: $paymentUrl")
+            viewModel.paymentUrl.value = null
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("RA Token Presale", color = Color.White) },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF26A69A))
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .padding(16.dp)
+                .fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Presale Ends: Apr 30, 2025", fontSize = 16.sp)
+                    Text("Price: 0.01 USD/RA", fontSize = 16.sp, color = Color(0xFF26A69A))
+                    Text("Your RA: ${viewModel.raTokens.collectAsState().value}", fontSize = 16.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it.filter { it.isDigit() } },
+                label = { Text("Amount to Buy (RA)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Total: %.2f USD".format(total), fontSize = 18.sp, color = Color(0xFF26A69A))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Crypto Options
+            Text("Pay with Crypto:", fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("ZK", "ETH", "USDT", "USDC").forEach { token ->
+                    Button(
+                        onClick = { paymentMethod = token },
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (paymentMethod == token) Color(0xFF26A69A) else Color.Transparent,
+                            contentColor = if (paymentMethod == token) Color.White else Color(0xFF26A69A)
+                        )
+                    ) { Text(token) }
+                }
+            }
+
+            // Fiat Options
+            Text("Or Fiat:", fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = fiatCurrency,
+                    onValueChange = { fiatCurrency = it },
+                    label = { Text("Currency") },
+                    modifier = Modifier.width(100.dp)
+                )
+                Box {
+                    Button(
+                        onClick = { fiatPaymentExpanded = true },
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                        border = BorderStroke(1.dp, Color(0xFF26A69A))
+                    ) { Text(fiatPaymentType, color = Color(0xFF26A69A)) }
+                    DropdownMenu(
+                        expanded = fiatPaymentExpanded,
+                        onDismissRequest = { fiatPaymentExpanded = false }
+                    ) {
+                        listOf("Card", "ACH", "Wire", "PayPal", "Venmo", "Apple Pay", "Samsung Pay").forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(type) },
+                                onClick = {
+                                    fiatPaymentType = type
+                                    fiatPaymentExpanded = false
+                                    paymentMethod = "Fiat"
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = {
+                    if (paymentMethod != "Fiat") {
+                        viewModel.swapForPresale(amount.toFloatOrNull() ?: 0f, paymentMethod) { success ->
+                            if (!success) println("Swap failed")
+                        }
+                    } else {
+                        viewModel.buyPresaleWithFiat(amount.toFloatOrNull() ?: 0f, fiatCurrency, fiatPaymentType)
+                    }
+                },
+                shape = CircleShape,
+                modifier = Modifier.size(100.dp),
+                enabled = !isLoading,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26A69A))
+            ) {
+                if (isLoading) CircularProgressIndicator(color = Color.White)
+                else Text("Buy RA", color = Color.White)
+            }
+        }
+    }package com.example.metawormminer.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavHostController
+import com.example.metawormminer.viewmodel.MetaWormViewModel
+
+@Composable
+fun PresaleScreen(navController: NavHostController, viewModel: MetaWormViewModel = hiltViewModel()) {
+    var amount by remember { mutableStateOf("1000") }
+    var paymentMethod by remember { mutableStateOf("ZK") }
+    var fiatCurrency by remember { mutableStateOf("USD") }
+    var fiatPaymentType by remember { mutableStateOf("Card") }
+    var fiatPaymentExpanded by remember { mutableStateOf(false) }
+    val total = (amount.toFloatOrNull() ?: 0f) * 0.01f // 0.01 USD/RA
+    val isLoading = viewModel.isLoading.collectAsState().value
+    val paymentUrl = viewModel.paymentUrl.value
+
+    LaunchedEffect(paymentUrl) {
+        if (paymentUrl != null) {
+            // TODO: Open WebView or browser for payment URL
+            println("Redirect to: $paymentUrl")
+            viewModel.paymentUrl.value = null
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("RA Token Presale", color = Color.White) },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF26A69A))
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .padding(16.dp)
+                .fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Presale Ends: Apr 30, 2025", fontSize = 16.sp)
+                    Text("Price: 0.01 USD/RA", fontSize = 16.sp, color = Color(0xFF26A69A))
+                    Text("Your RA: ${viewModel.raTokens.collectAsState().value}", fontSize = 16.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it.filter { it.isDigit() } },
+                label = { Text("Amount to Buy (RA)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Total: %.2f USD".format(total), fontSize = 18.sp, color = Color(0xFF26A69A))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Crypto Options
+            Text("Pay with Crypto:", fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("ZK", "ETH", "USDT", "USDC").forEach { token ->
+                    Button(
+                        onClick = { paymentMethod = token },
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (paymentMethod == token) Color(0xFF26A69A) else Color.Transparent,
+                            contentColor = if (paymentMethod == token) Color.White else Color(0xFF26A69A)
+                        )
+                    ) { Text(token) }
+                }
+            }
+
+            // Fiat Options
+            Text("Or Fiat:", fontSize = 16.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = fiatCurrency,
+                    onValueChange = { fiatCurrency = it },
+                    label = { Text("Currency") },
+                    modifier = Modifier.width(100.dp)
+                )
+                Box {
+                    Button(
+                        onClick = { fiatPaymentExpanded = true },
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                        border = BorderStroke(1.dp, Color(0xFF26A69A))
+                    ) { Text(fiatPaymentType, color = Color(0xFF26A69A)) }
+                    DropdownMenu(
+                        expanded = fiatPaymentExpanded,
+                        onDismissRequest = { fiatPaymentExpanded = false }
+                    ) {
+                        listOf("Card", "ACH", "Wire", "PayPal", "Venmo", "Apple Pay", "Samsung Pay").forEach { type ->
+                            DropdownMenuItem(
+                                text = { Text(type) },
+                                onClick = {
+                                    fiatPaymentType = type
+                                    fiatPaymentExpanded = false
+                                    paymentMethod = "Fiat"
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = {
+                    if (paymentMethod != "Fiat") {
+                        viewModel.swapForPresale(amount.toFloatOrNull() ?: 0f, paymentMethod) { success ->
+                            if (!success) println("Swap failed")
+                        }
+                    } else {
+                        viewModel.buyPresaleWithFiat(amount.toFloatOrNull() ?: 0f, fiatCurrency, fiatPaymentType)
+                    }
+                },
+                shape = CircleShape,
+                modifier = Modifier.size(100.dp),
+                enabled = !isLoading,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26A69A))
+            ) {
+                if (isLoading) CircularProgressIndicator(color = Color.White)
+                else Text("Buy RA", color = Color.White)
+            }
+        }
+    }
+}
+}
