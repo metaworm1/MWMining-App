@@ -740,3 +740,55 @@ fun PresaleScreen(navController: NavHostController, viewModel: MetaWormViewModel
     }
 }
 }
+
+package com.example.metawormminer
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.MaterialTheme
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.example.metawormminer.ui.LoginScreen
+import com.example.metawormminer.ui.PresaleScreen
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
+class MetaWormMiner : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                val navController = rememberNavController()
+                NavHost(navController, startDestination = "login") {
+                    composable("login") { LoginScreen(navController, hiltViewModel()) }
+                    composable("presale") { PresaleScreen(navController, hiltViewModel()) }
+                }
+            }
+        }
+    }
+}
+
+<resources>
+    <color name="teal">#FF26A69A</color>
+    <color name="white">#FFFFFF</color>
+    <color name="red">#FFF44336</color>
+</resources>
+
+<resources>
+    <string name="app_name">MetaWormMiner</string>
+    <string name="ra_tokens">RA Tokens: %.2f</string>
+</resources>
+
+<resources>
+    <style name="Theme.MetaWormMiner" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/teal</item>
+        <item name="colorPrimaryVariant">@color/teal</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="android:statusBarColor">@color/teal</item>
+    </style>
+</resources>
+
+
